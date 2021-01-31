@@ -16,9 +16,11 @@
 
 enum prot {
    none,
-   r = (1<<0),
-   w = (1<<1),
-   x = (1<<2)
+   READ  = (1<<0),
+   WRITE = (1<<1),
+   EXEC  = (1<<2),
+   RW    = READ|WRITE,
+   RWX   = READ|WRITE|EXEC
 };
 
 #ifdef _WIN32
@@ -30,12 +32,17 @@ enum prot {
    
    int change_prot(void* addr, size_t size, int prot){
       DWORD old; 
-      DWORD _prot = 0;
-      if (prot & r) winprot |= PAGE_READ;
-      if (prot & w) winprot |= PAGE_WRITE;
-      if (prot & x) winprot |= PAGE_EXECUTE;
-      if (VirtualProtect(addr, size, _prot, &old))
-         return 1;
+      DWORD _prot = PAGE_EXECUTE_READWRITE;
+      
+      if (prot & RWX) {
+          _prot = PAGE_EXECUTE_READWRITE;
+      } else if (prot & RW){
+          _prot = PAGE_READWRITE;
+      } else if (prot & EXEC){
+          _prot = PAGE_EXECUTE;
+      }
+      
+      VirtualProtect(addr, size, _prot, &old);
       return 0;
    } 
 
@@ -53,28 +60,28 @@ enum prot {
 	   int len = (int)((size_t)addr + size-(size_t)page_start);
      
       int _prot = 0;
-      if (prot & r) _prot |= PROT_READ;
-      if (prot & w) _prot |= PROT_WRITE;
-      if (prot & x) _prot |= PROT_EXEC;
+      if (prot & READ)  _prot |= PROT_READ;
+      if (prot & WRITE) _prot |= PROT_WRITE;
+      if (prot & EXEC)  _prot |= PROT_EXEC;
       if (mprotect(page_start, len, _prot))
          return 1;
       return 0;
    } 
 
-#endif
+#endif // UNIX based
 
 
 // Replaces function with return instruction
 #define PREMATURE_RETURN(label, retval) do {                         \
     __asm__ __volatile__ ("nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop"); \
     __asm__ __volatile__ ("nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop"); \
-    change_prot(label, 4096, r|w);                                   \
+    change_prot(label, 4096, RW);                                    \
     ((char*) label)[0]  = 0x48;                                      \
     ((char*) label)[1]  = 0xb8;                                      \
     int64_t* val_p      = (int64_t*) &((char*) label)[2];            \
     *val_p              = (int64_t) retval;                          \
     ((char*) label)[10] = 0xC3;                                      \
-    change_prot(label, 4096, r|x);                                   \
+    change_prot(label, 4096, EXEC);                                  \
 } while(0)
 
 int init();
@@ -96,7 +103,7 @@ int init(){
     // do stuff on init
     
     for (uint8_t i = 0; funcs[i] != NULL; i++){
-        change_prot(funcs[i], 4096, r|w);
+        change_prot(funcs[i], 4096, RW);
         // nop instructions
         funcs[i][0] = 0x90;
         funcs[i][1] = 0x90;
@@ -105,7 +112,7 @@ int init(){
         funcs[i][3] = 0x90;
         funcs[i][4] = 0x90;
         #endif // clang
-        change_prot(funcs[i], 4096, r|x);
+        change_prot(funcs[i], 4096, EXEC);
     }
     PREMATURE_RETURN(init, -1);
     
